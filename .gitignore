@@ -3,3 +3,4 @@ dist/
 *.log
 .repack-logs.json
 .DS_Store
+.npmrc
