@@ -1,0 +1,36 @@
+{
+  "name": "repack-logs-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for tailing Re.Pack/Rock.js dev server logs",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "repack-logs-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "repack",
+    "react-native",
+    "logs",
+    "dev-tools"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "chokidar": "^4.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
