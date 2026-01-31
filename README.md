@@ -4,9 +4,10 @@ An MCP (Model Context Protocol) server for tailing Re.Pack/Rspack dev server log
 
 ## How It Works
 
-This package provides two components:
+This package provides three components:
 1. **RepackLogsPlugin** - An Rspack/Webpack plugin that writes build logs to a JSON file
 2. **MCP Server** - Watches the log file and provides tools for AI assistants to query logs
+3. **Client Logger** - A lightweight logger for React Native apps that sends runtime logs to the MCP server
 
 ## Installation
 
@@ -56,7 +57,46 @@ export default Repack.defineRspackConfig({
 });
 ```
 
-### Step 2: Configure the MCP Server
+### Step 2: Add Runtime Logging (Optional)
+
+To capture runtime logs (console.log from your app), add the client logger:
+
+```js
+// In your React Native app
+import { createLogger } from 'repack-logs-mcp/client';
+
+// Create a tagged logger for your component/module
+const log = createLogger('MyComponent');
+
+// Use it like console.log
+log.info('Component mounted');
+log.warn('Something looks wrong', { details: data });
+log.error('Failed to fetch', error);
+log.debug('Debug info', { state });
+```
+
+The logger automatically:
+- Sends logs to the MCP server (default: http://localhost:9090)
+- Also calls console.log so you see logs in Metro
+- Batches logs for efficiency
+- Handles errors gracefully (won't crash your app)
+
+**Configuration:**
+
+```js
+import { configure, createLogger } from 'repack-logs-mcp/client';
+
+// Global configuration
+configure({
+  serverUrl: 'http://localhost:9090',  // MCP runtime server
+  passthrough: true,                    // Also call console.log
+  enabled: __DEV__,                     // Only in development
+});
+
+const log = createLogger('MyComponent');
+```
+
+### Step 3: Configure the MCP Server
 
 Point the MCP server to the same log file path used in your plugin config.
 
@@ -64,10 +104,11 @@ Point the MCP server to the same log file path used in your plugin config.
 
 | Tool | Description |
 |------|-------------|
-| `get_build_logs` | Get recent logs with filters (type, limit, time, issuer, search) |
+| `get_build_logs` | Get recent build logs with filters (type, limit, time, issuer, search) |
+| `get_runtime_logs` | Get runtime logs from the React Native app (console.log output) |
 | `get_errors` | Get only errors and warnings |
 | `clear_logs` | Clear the in-memory buffer |
-| `get_status` | Show watcher status and statistics |
+| `get_status` | Show watcher status, runtime server port, and statistics |
 
 ## Configuration
 
@@ -96,8 +137,9 @@ The log file path can be set via:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `REPACK_LOG_FILE` | Path to the log file | `.repack-logs.json` |
+| `REPACK_LOG_FILE` | Path to the build log file | `.repack-logs.json` |
 | `REPACK_MAX_LOGS` | Maximum logs to keep in memory | `1000` |
+| `REPACK_RUNTIME_PORT` | HTTP port for runtime log server | `9090` |
 
 ## Claude Code Integration
 

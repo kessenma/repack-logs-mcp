@@ -3,10 +3,12 @@ import { resolve } from 'path';
 export interface Config {
   logFilePath: string;
   maxLogs: number;
+  runtimePort: number;
 }
 
 const DEFAULT_LOG_FILE = '.repack-logs.json';
 const DEFAULT_MAX_LOGS = 1000;
+const DEFAULT_RUNTIME_PORT = 9090;
 
 /**
  * Parse configuration from CLI args and environment variables.
@@ -30,8 +32,13 @@ export function getConfig(): Config {
     ? parseInt(process.env.REPACK_MAX_LOGS, 10)
     : DEFAULT_MAX_LOGS;
 
+  const runtimePort = process.env.REPACK_RUNTIME_PORT
+    ? parseInt(process.env.REPACK_RUNTIME_PORT, 10)
+    : DEFAULT_RUNTIME_PORT;
+
   return {
     logFilePath: resolve(logFilePath),
     maxLogs,
+    runtimePort,
   };
 }

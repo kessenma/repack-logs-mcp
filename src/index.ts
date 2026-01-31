@@ -6,11 +6,13 @@ import { z } from 'zod';
 import { getConfig } from './config.js';
 import { LogStore } from './log-store.js';
 import { LogWatcher } from './log-watcher.js';
+import { RuntimeServer } from './runtime-server.js';
 import type { LogType } from './types.js';
 
 const config = getConfig();
 const store = new LogStore(config.maxLogs);
 const watcher = new LogWatcher(config.logFilePath, store);
+const runtimeServer = new RuntimeServer({ port: config.runtimePort, store });
 
 // Create MCP server
 const server = new McpServer({
@@ -132,30 +134,109 @@ server.tool(
   }
 );
 
+// Tool: get_runtime_logs
+server.tool(
+  'get_runtime_logs',
+  'Get runtime logs from the React Native app (console.log output)',
+  {
+    limit: z.number().optional().describe('Maximum number of logs to return (default: 50)'),
+    tag: z.string().optional().describe('Filter by log tag/component name'),
+    types: z.array(z.enum(['info', 'warn', 'error', 'debug']))
+      .optional()
+      .describe('Filter by log type(s)'),
+    search: z.string().optional().describe('Search in log messages'),
+  },
+  async (args) => {
+    // Filter out build logs (webpack, repack issuers)
+    const buildIssuers = ['webpack', 'repack', 'watcher'];
+    const allLogs = store.get({ limit: 1000 });
+    let runtimeLogs = allLogs.filter(log => !buildIssuers.includes(log.issuer ?? ''));
+
+    // Apply additional filters
+    if (args.tag) {
+      runtimeLogs = runtimeLogs.filter(log => log.issuer === args.tag);
+    }
+    if (args.types) {
+      runtimeLogs = runtimeLogs.filter(log => args.types!.includes(log.type as any));
+    }
+    if (args.search) {
+      const searchLower = args.search.toLowerCase();
+      runtimeLogs = runtimeLogs.filter(log =>
+        log.message.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Apply limit
+    runtimeLogs = runtimeLogs.slice(0, args.limit ?? 50);
+
+    if (runtimeLogs.length === 0) {
+      return {
+        content: [{
+          type: 'text',
+          text: 'No runtime logs found. Make sure your app is using the repack-logs-mcp client.\n\nSetup:\n1. Import: import { createLogger } from \'repack-logs-mcp/client\';\n2. Create: const log = createLogger(\'MyComponent\');\n3. Use: log.info(\'message\'), log.error(\'message\', data)',
+        }],
+      };
+    }
+
+    const formatted = runtimeLogs.map(log => {
+      const parts = [
+        `[${log.timestamp}]`,
+        `[${log.type.toUpperCase()}]`,
+      ];
+      if (log.issuer) parts.push(`[${log.issuer}]`);
+      parts.push(log.message);
+      if (log.file) parts.push(`\n  File: ${log.file}`);
+      if ((log as any).data) parts.push(`\n  Data: ${JSON.stringify((log as any).data, null, 2)}`);
+      return parts.join(' ');
+    }).join('\n\n');
+
+    return {
+      content: [{
+        type: 'text',
+        text: `Found ${runtimeLogs.length} runtime log(s):\n\n${formatted}`,
+      }],
+    };
+  }
+);
+
 // Tool: get_status
 server.tool(
   'get_status',
-  'Get the current status of the log watcher',
+  'Get the current status of the log watcher and runtime server',
   {},
   async () => {
+    const buildIssuers = ['webpack', 'repack', 'watcher'];
+    const allLogs = store.get({ limit: 10000 });
+    const buildLogs = allLogs.filter(log => buildIssuers.includes(log.issuer ?? ''));
+    const runtimeLogs = allLogs.filter(log => !buildIssuers.includes(log.issuer ?? ''));
+
     const status = {
       watching: watcher.isWatching,
       filePath: watcher.path,
       fileExists: watcher.fileExists,
       logCount: store.count,
+      buildLogCount: buildLogs.length,
+      runtimeLogCount: runtimeLogs.length,
       errorCount: store.countByType('error'),
       warningCount: store.countByType('warn'),
       lastUpdate: store.lastTimestamp,
+      runtimeServerPort: runtimeServer.activePort,
     };
 
     const lines = [
-      `Watcher Status:`,
+      `Build Log Watcher:`,
       `  Watching: ${status.watching ? 'Yes' : 'No'}`,
       `  Log File: ${status.filePath}`,
       `  File Exists: ${status.fileExists ? 'Yes' : 'No'}`,
       ``,
+      `Runtime Log Server:`,
+      `  Port: ${status.runtimeServerPort}`,
+      `  URL: http://localhost:${status.runtimeServerPort}`,
+      ``,
       `Log Statistics:`,
       `  Total Logs: ${status.logCount}`,
+      `  Build Logs: ${status.buildLogCount}`,
+      `  Runtime Logs: ${status.runtimeLogCount}`,
       `  Errors: ${status.errorCount}`,
       `  Warnings: ${status.warningCount}`,
       `  Last Update: ${status.lastUpdate ?? 'Never'}`,
@@ -175,6 +256,9 @@ async function main() {
   // Start watching the log file
   await watcher.start();
 
+  // Start the runtime log HTTP server
+  await runtimeServer.start();
+
   // Connect via stdio
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -182,11 +266,13 @@ async function main() {
   // Handle shutdown
   process.on('SIGINT', async () => {
     await watcher.stop();
+    await runtimeServer.stop();
     process.exit(0);
   });
 
   process.on('SIGTERM', async () => {
     await watcher.stop();
+    await runtimeServer.stop();
     process.exit(0);
   });
 }
