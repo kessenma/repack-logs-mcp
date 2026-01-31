@@ -4,12 +4,9 @@ An MCP (Model Context Protocol) server for tailing Re.Pack/Rspack dev server log
 
 ## How It Works
 
-Re.Pack supports `--log-file <path>` which outputs JSON log entries to a file. This MCP server watches that file and provides tools to query the logs.
-
-```bash
-# Run your dev server with file logging
-npx react-native start --log-file .repack-logs.json
-```
+This package provides two components:
+1. **RepackLogsPlugin** - An Rspack/Webpack plugin that writes build logs to a JSON file
+2. **MCP Server** - Watches the log file and provides tools for AI assistants to query logs
 
 ## Installation
 
@@ -18,6 +15,50 @@ npm install -g repack-logs-mcp
 # or use directly with npx
 npx repack-logs-mcp /path/to/.repack-logs.json
 ```
+
+## Setup
+
+### Step 1: Add the Plugin to Your Rspack Config
+
+Add the `RepackLogsPlugin` to your `rspack.config.mjs` (or `rspack.config.js`):
+
+```js
+import { RepackLogsPlugin } from 'repack-logs-mcp/plugin';
+
+export default {
+  // ... your existing config
+  plugins: [
+    // ... your existing plugins
+    new RepackLogsPlugin({
+      // Path to write logs (default: '.repack-logs.json')
+      outputPath: '/absolute/path/to/.repack-logs.json',
+      // Clear logs on each build start (default: true)
+      clearOnStart: true,
+    }),
+  ],
+};
+```
+
+**Example with Re.Pack:**
+
+```js
+import * as Repack from '@callstack/repack';
+import { RepackLogsPlugin } from 'repack-logs-mcp/plugin';
+
+export default Repack.defineRspackConfig({
+  // ... your config
+  plugins: [
+    new Repack.RepackPlugin(),
+    new RepackLogsPlugin({
+      outputPath: '/Users/yourname/project/.repack-logs.json',
+    }),
+  ],
+});
+```
+
+### Step 2: Configure the MCP Server
+
+Point the MCP server to the same log file path used in your plugin config.
 
 ## Tools Provided
 
@@ -44,7 +85,14 @@ The log file path can be set via:
 
 3. **Default**: `.repack-logs.json` in current directory
 
-### Environment Variables
+### Plugin Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `outputPath` | Path to the log file | `.repack-logs.json` |
+| `clearOnStart` | Clear log file on each build start | `true` |
+
+### Environment Variables (MCP Server)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
