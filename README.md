@@ -59,51 +59,151 @@ export default Repack.defineRspackConfig({
 
 ### Step 2: Add Runtime Logging (Optional)
 
-To capture runtime logs (console.log from your app), add ONE line to your app's entry point:
+To capture runtime logs (console.log from your app), you need to add a small client script that intercepts console calls and sends them to the MCP server.
+
+**Step 2a: Create the client file**
+
+Create a file called `mcp-client.js` in your React Native app's root directory (next to `index.js`):
 
 ```js
-// In index.js or App.tsx
-import { enableConsoleCapture } from 'repack-logs-mcp/client';
+/**
+ * MCP Console Capture Client
+ * Intercepts console.log/warn/error and sends to MCP server
+ */
 
-// Enable automatic capture of all console.log/warn/error calls
+var SERVER_URL = 'http://localhost:9090';
+var logBuffer = [];
+var flushTimer = null;
+var BATCH_INTERVAL = 1000;
+var originalConsole = {
+  log: console.log,
+  warn: console.warn,
+  error: console.error,
+  debug: console.debug,
+  info: console.info
+};
+
+function flushLogs() {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (logBuffer.length === 0) return;
+
+  var logs = logBuffer.slice();
+  logBuffer = [];
+
+  fetch(SERVER_URL + '/logs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ logs: logs })
+  }).catch(function() {});
+}
+
+function formatArg(arg) {
+  if (typeof arg === 'string') return arg;
+  if (arg instanceof Error) return arg.name + ': ' + arg.message;
+  try {
+    return JSON.stringify(arg);
+  } catch (e) {
+    return String(arg);
+  }
+}
+
+function createInterceptor(type, original) {
+  return function() {
+    var args = Array.prototype.slice.call(arguments);
+    original.apply(console, args);
+
+    var tag = 'console';
+    var message = args.map(formatArg).join(' ');
+
+    if (typeof args[0] === 'string') {
+      var match = args[0].match(/^\[([^\]]+)\]/);
+      if (match) tag = match[1];
+    }
+
+    var entry = {
+      type: type,
+      message: message,
+      tag: tag,
+      timestamp: new Date().toISOString()
+    };
+
+    if (args.length > 1) {
+      try {
+        entry.data = args.length === 2 ? args[1] : args.slice(1);
+      } catch (e) {}
+    }
+
+    logBuffer.push(entry);
+    if (!flushTimer) {
+      flushTimer = setTimeout(flushLogs, BATCH_INTERVAL);
+    }
+  };
+}
+
+function enableConsoleCapture(options) {
+  options = options || {};
+  if (options.serverUrl) SERVER_URL = options.serverUrl;
+
+  console.log = createInterceptor('info', originalConsole.log);
+  console.info = createInterceptor('info', originalConsole.info);
+  console.warn = createInterceptor('warn', originalConsole.warn);
+  console.error = createInterceptor('error', originalConsole.error);
+  console.debug = createInterceptor('debug', originalConsole.debug);
+}
+
+function disableConsoleCapture() {
+  console.log = originalConsole.log;
+  console.info = originalConsole.info;
+  console.warn = originalConsole.warn;
+  console.error = originalConsole.error;
+  console.debug = originalConsole.debug;
+}
+
+module.exports = {
+  enableConsoleCapture: enableConsoleCapture,
+  disableConsoleCapture: disableConsoleCapture
+};
+```
+
+**Step 2b: Enable capture in your app**
+
+Add this to your `index.js` (before `AppRegistry.registerComponent`):
+
+```js
+// Enable console.log capture for MCP debugging (only in dev)
 if (__DEV__) {
-  enableConsoleCapture();
+  try {
+    const { enableConsoleCapture } = require('./mcp-client');
+    enableConsoleCapture();
+  } catch (e) {
+    // MCP client not available, skip
+  }
 }
 ```
 
-That's it! Now ALL your existing `console.log` calls are automatically sent to the MCP server.
+**Step 2c: Check the runtime server port**
+
+Run `get_status` to see which port the runtime server is using:
+
+```
+Runtime Log Server:
+  Port: 9090
+  URL: http://localhost:9090
+```
+
+If the port is different from 9090 (e.g., 9093), update `SERVER_URL` in `mcp-client.js` to match.
+
+**That's it!** Now ALL your existing `console.log` calls are automatically sent to the MCP server.
 
 The capture:
 - Intercepts console.log, console.warn, console.error, console.debug
 - Extracts tags from `[TagName]` patterns (e.g., `console.log('[MyComponent] hello')`)
 - Still outputs to Metro console (so you see logs there too)
-- Batches logs for efficiency
+- Batches logs for efficiency (sends every 1 second)
 - Only runs in development mode
-
-**Advanced: Tagged Loggers**
-
-For more control, you can create tagged loggers:
-
-```js
-import { createLogger } from 'repack-logs-mcp/client';
-
-const log = createLogger('MyComponent');
-log.info('Component mounted');
-log.error('Failed to fetch', error);
-```
-
-**Configuration:**
-
-```js
-import { enableConsoleCapture } from 'repack-logs-mcp/client';
-
-enableConsoleCapture({
-  serverUrl: 'http://localhost:9090',  // MCP runtime server (default)
-  enabled: __DEV__,                     // Only in development (default)
-  includePatterns: [/MyComponent/],     // Only capture matching tags/messages
-  excludePatterns: [/VERBOSE/],         // Exclude matching tags/messages
-});
-```
 
 ### Step 3: Configure the MCP Server
 
@@ -167,6 +267,7 @@ Add to your Claude Code MCP settings (`~/.claude/settings.json` or project setti
 
 Then ask Claude things like:
 - "What are the recent build logs?"
+- "Show me the runtime logs"
 - "Are there any build errors?"
 - "Show me warnings from the last build"
 - "What's the status of the log watcher?"
@@ -195,6 +296,24 @@ Args: { "search": "Cannot find module" }
 ```
 Tool: get_errors
 Args: { "limit": 10 }
+```
+
+### Get runtime logs
+```
+Tool: get_runtime_logs
+Args: { "limit": 50 }
+```
+
+### Filter runtime logs by tag
+```
+Tool: get_runtime_logs
+Args: { "tag": "MyComponent", "limit": 20 }
+```
+
+### Search runtime logs
+```
+Tool: get_runtime_logs
+Args: { "search": "error", "types": ["error", "warn"] }
 ```
 
 ## Development
