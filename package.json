@@ -1,6 +1,6 @@
 {
   "name": "repack-logs-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "MCP server for tailing Re.Pack/Rock.js dev server logs",
   "type": "module",
   "main": "dist/index.js",
