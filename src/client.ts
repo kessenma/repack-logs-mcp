@@ -2,11 +2,14 @@
  * Client-side logger for React Native apps.
  * Sends logs to the repack-logs-mcp server for debugging with AI assistants.
  *
- * Usage:
+ * EASY SETUP - Just call enableConsoleCapture() once at app startup:
+ *   import { enableConsoleCapture } from 'repack-logs-mcp/client';
+ *   enableConsoleCapture(); // All console.log/warn/error now sent to MCP
+ *
+ * MANUAL USAGE - For tagged loggers:
  *   import { createLogger } from 'repack-logs-mcp/client';
  *   const log = createLogger('MyComponent');
  *   log.info('Hello world');
- *   log.error('Something failed', { details: error });
  */
 
 export interface LoggerOptions {
@@ -177,5 +180,147 @@ export const log = {
   debug: (tag: string, message: string, data?: unknown) =>
     createLogger(tag).debug(message, data),
 };
+
+// Store original console methods
+const originalConsole = {
+  log: console.log,
+  warn: console.warn,
+  error: console.error,
+  debug: console.debug,
+  info: console.info,
+};
+
+let consoleCapureEnabled = false;
+
+export interface ConsoleCaptureOptions {
+  /** Server URL (default: http://localhost:9090) */
+  serverUrl?: string;
+  /** Whether capture is enabled (default: __DEV__ if available, otherwise true) */
+  enabled?: boolean;
+  /** Tag patterns to capture (regex). If not set, captures all. */
+  includePatterns?: RegExp[];
+  /** Tag patterns to exclude (regex). */
+  excludePatterns?: RegExp[];
+}
+
+/**
+ * Enable automatic capture of all console.log/warn/error calls.
+ * Call this once at app startup (e.g., in index.js or App.tsx).
+ *
+ * @example
+ * // In your app's entry point:
+ * import { enableConsoleCapture } from 'repack-logs-mcp/client';
+ * enableConsoleCapture();
+ *
+ * // Now all console.log calls are automatically sent to MCP:
+ * console.log('[MyComponent] Hello world'); // Sent to MCP with tag "MyComponent"
+ * console.error('Something failed', error); // Sent to MCP with tag "console"
+ */
+export function enableConsoleCapture(options: ConsoleCaptureOptions = {}): void {
+  if (consoleCapureEnabled) {
+    return; // Already enabled
+  }
+
+  const serverUrl = options.serverUrl ?? globalServerUrl;
+  const enabled = options.enabled ?? globalEnabled;
+  const includePatterns = options.includePatterns;
+  const excludePatterns = options.excludePatterns;
+
+  if (!enabled) {
+    return;
+  }
+
+  const createInterceptor = (
+    type: 'info' | 'warn' | 'error' | 'debug',
+    original: (...args: unknown[]) => void
+  ) => {
+    return (...args: unknown[]) => {
+      // Always call original console method
+      original.apply(console, args);
+
+      // Extract tag from message if it matches [Tag] pattern
+      let tag = 'console';
+      let message = args.map(arg => formatArg(arg)).join(' ');
+      let data: unknown = undefined;
+
+      // Check for [Tag] pattern at start of first argument
+      if (typeof args[0] === 'string') {
+        const tagMatch = args[0].match(/^\[([^\]]+)\]/);
+        if (tagMatch) {
+          tag = tagMatch[1];
+        }
+      }
+
+      // If there are multiple args, treat extras as data
+      if (args.length > 1) {
+        const firstArg = args[0];
+        if (typeof firstArg === 'string') {
+          message = firstArg;
+          data = args.length === 2 ? args[1] : args.slice(1);
+        }
+      }
+
+      // Check include/exclude patterns
+      if (includePatterns && includePatterns.length > 0) {
+        const matches = includePatterns.some(p => p.test(tag) || p.test(message));
+        if (!matches) return;
+      }
+      if (excludePatterns && excludePatterns.length > 0) {
+        const excluded = excludePatterns.some(p => p.test(tag) || p.test(message));
+        if (excluded) return;
+      }
+
+      // Send to MCP server
+      const entry: LogEntry = {
+        type,
+        message,
+        tag,
+        timestamp: new Date().toISOString(),
+        ...(data !== undefined && { data: serializeData(data) }),
+      };
+
+      logBuffer.push(entry);
+      if (!flushTimer) {
+        flushTimer = setTimeout(() => {
+          flushLogs(serverUrl);
+        }, batchInterval);
+      }
+    };
+  };
+
+  // Monkey-patch console methods
+  console.log = createInterceptor('info', originalConsole.log);
+  console.info = createInterceptor('info', originalConsole.info);
+  console.warn = createInterceptor('warn', originalConsole.warn);
+  console.error = createInterceptor('error', originalConsole.error);
+  console.debug = createInterceptor('debug', originalConsole.debug);
+
+  consoleCapureEnabled = true;
+}
+
+/**
+ * Disable console capture and restore original console methods.
+ */
+export function disableConsoleCapture(): void {
+  if (!consoleCapureEnabled) return;
+
+  console.log = originalConsole.log;
+  console.info = originalConsole.info;
+  console.warn = originalConsole.warn;
+  console.error = originalConsole.error;
+  console.debug = originalConsole.debug;
+
+  consoleCapureEnabled = false;
+}
+
+function formatArg(arg: unknown): string {
+  if (typeof arg === 'string') return arg;
+  if (arg instanceof Error) return `${arg.name}: ${arg.message}`;
+  try {
+    return JSON.stringify(arg);
+  } catch {
+    return String(arg);
+  }
+}
 
 export default createLogger;

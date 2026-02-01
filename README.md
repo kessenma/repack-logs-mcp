@@ -59,41 +59,50 @@ export default Repack.defineRspackConfig({
 
 ### Step 2: Add Runtime Logging (Optional)
 
-To capture runtime logs (console.log from your app), add the client logger:
+To capture runtime logs (console.log from your app), add ONE line to your app's entry point:
 
 ```js
-// In your React Native app
-import { createLogger } from 'repack-logs-mcp/client';
+// In index.js or App.tsx
+import { enableConsoleCapture } from 'repack-logs-mcp/client';
 
-// Create a tagged logger for your component/module
-const log = createLogger('MyComponent');
-
-// Use it like console.log
-log.info('Component mounted');
-log.warn('Something looks wrong', { details: data });
-log.error('Failed to fetch', error);
-log.debug('Debug info', { state });
+// Enable automatic capture of all console.log/warn/error calls
+if (__DEV__) {
+  enableConsoleCapture();
+}
 ```
 
-The logger automatically:
-- Sends logs to the MCP server (default: http://localhost:9090)
-- Also calls console.log so you see logs in Metro
+That's it! Now ALL your existing `console.log` calls are automatically sent to the MCP server.
+
+The capture:
+- Intercepts console.log, console.warn, console.error, console.debug
+- Extracts tags from `[TagName]` patterns (e.g., `console.log('[MyComponent] hello')`)
+- Still outputs to Metro console (so you see logs there too)
 - Batches logs for efficiency
-- Handles errors gracefully (won't crash your app)
+- Only runs in development mode
+
+**Advanced: Tagged Loggers**
+
+For more control, you can create tagged loggers:
+
+```js
+import { createLogger } from 'repack-logs-mcp/client';
+
+const log = createLogger('MyComponent');
+log.info('Component mounted');
+log.error('Failed to fetch', error);
+```
 
 **Configuration:**
 
 ```js
-import { configure, createLogger } from 'repack-logs-mcp/client';
+import { enableConsoleCapture } from 'repack-logs-mcp/client';
 
-// Global configuration
-configure({
-  serverUrl: 'http://localhost:9090',  // MCP runtime server
-  passthrough: true,                    // Also call console.log
-  enabled: __DEV__,                     // Only in development
+enableConsoleCapture({
+  serverUrl: 'http://localhost:9090',  // MCP runtime server (default)
+  enabled: __DEV__,                     // Only in development (default)
+  includePatterns: [/MyComponent/],     // Only capture matching tags/messages
+  excludePatterns: [/VERBOSE/],         // Exclude matching tags/messages
 });
-
-const log = createLogger('MyComponent');
 ```
 
 ### Step 3: Configure the MCP Server
